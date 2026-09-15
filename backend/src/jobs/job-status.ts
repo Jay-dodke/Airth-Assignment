@@ -3,7 +3,7 @@ export const JOB_STATUSES = ['pending', 'running', 'completed', 'failed'] as con
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
 export const VALID_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
-  pending: ['running', 'failed'],
+  pending: ['running'],
   running: ['completed', 'failed'],
   completed: [],
   failed: [],

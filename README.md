@@ -6,15 +6,16 @@ The project is intentionally small, but it includes practical backend safeguards
 
 ## Features
 
-- Create jobs with a title and type.
+- Create jobs with a trimmed, validated title and type.
 - View all jobs sorted by newest first.
 - Filter jobs by `pending`, `running`, `completed`, or `failed`.
-- Advance jobs only through valid status transitions.
+- Advance jobs only through valid backend-enforced status transitions.
 - Delete jobs from the dashboard.
 - Refresh the dashboard manually.
 - Validate API request bodies with NestJS validation pipes.
 - Persist data locally with SQLite.
-- Detect stale status updates with `expectedStatus`, `expectedVersion`, and a TypeORM version column.
+- Detect stale status updates with an atomic conditional update, `expectedStatus`, `expectedVersion`, and a TypeORM version column.
+- Check backend availability with `GET /health`.
 
 ## Tech Stack
 
@@ -58,7 +59,7 @@ Airth/
 
 ## How It Works
 
-The frontend is a Vite React app that talks to the backend through a small fetch helper. By default it calls `http://localhost:3000`, or the value of `VITE_API_BASE_URL` when configured.
+The frontend is a Vite React app that talks to the backend through a small fetch helper. By default it calls `http://localhost:3001`, or the value of `VITE_API_BASE_URL` when configured.
 
 The backend exposes a `jobs` resource through NestJS. Jobs are stored in a SQLite database using TypeORM. Each job has a UUID, title, type, status, creation timestamp, and version number.
 
@@ -77,7 +78,7 @@ Allowed transitions:
 
 | Current status | Allowed next statuses |
 | --- | --- |
-| `pending` | `running`, `failed` |
+| `pending` | `running` |
 | `running` | `completed`, `failed` |
 | `completed` | None |
 | `failed` | None |
@@ -95,6 +96,8 @@ The status update endpoint uses an atomic conditional database update. A status 
 - The optional `expectedVersion` still matches the stored version.
 
 The frontend sends both `expectedStatus` and `expectedVersion`. If another browser tab or API client updates the same job first, the second update returns `409 Conflict` and the frontend reloads the latest jobs.
+
+For example, if two browser tabs both try to change the same job from `pending` to `running`, only one database update can match `WHERE id = :id AND status IN ('pending')`. The first request succeeds, increments the version, and changes the status. The second request affects zero rows and receives `409 Conflict`.
 
 This prevents lost updates without requiring a background worker, distributed lock, or external queue service.
 
@@ -122,7 +125,7 @@ npm run dev
 Default local URLs:
 
 - Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:3000`
+- Backend API: `http://localhost:3001`
 
 ## Available Scripts
 
@@ -161,7 +164,7 @@ Backend:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `3000` | Port used by the NestJS API. |
+| `PORT` | `3001` | Port used by the NestJS API. |
 | `DATABASE_PATH` | `jobs.sqlite` | SQLite database file path. |
 | `CORS_ORIGIN` | Allows all origins | Comma-separated list of allowed frontend origins. |
 
@@ -169,23 +172,39 @@ Frontend:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `VITE_API_BASE_URL` | `http://localhost:3000` | Base URL for the backend API. |
+| `VITE_API_BASE_URL` | `http://localhost:3001` | Base URL for the backend API. |
 
 Example frontend environment file:
 
 ```env
-VITE_API_BASE_URL=http://localhost:3000
+VITE_API_BASE_URL=http://localhost:3001
 ```
 
 Example backend environment values:
 
 ```env
-PORT=3000
+PORT=3001
 DATABASE_PATH=jobs.sqlite
 CORS_ORIGIN=http://localhost:5173
 ```
 
+In production, set `VITE_API_BASE_URL` to the deployed backend URL and set `CORS_ORIGIN` to the deployed frontend URL. Do not rely on the localhost fallback outside local development.
+
 ## API Reference
+
+### Health Check
+
+```http
+GET /health
+```
+
+Returns:
+
+```json
+{
+  "status": "ok"
+}
+```
 
 ### Create a Job
 
@@ -207,6 +226,8 @@ Validation:
 
 - `title` is required, must be a string, and has a maximum length of 120 characters.
 - `type` is required, must be a string, and has a maximum length of 60 characters.
+- `title` and `type` are trimmed before validation and cannot be whitespace-only.
+- `status` is not accepted when creating a job; new jobs are always created as `pending`.
 
 ### List Jobs
 
@@ -241,6 +262,7 @@ Fields:
 
 Possible errors:
 
+- `400 Bad Request` when the request body is malformed, contains unknown fields, or contains an invalid status value.
 - `404 Not Found` when the job does not exist.
 - `409 Conflict` when the transition is invalid or the job changed before the update was applied.
 
@@ -275,10 +297,11 @@ type Job = {
 ## Production Notes
 
 - SQLite is suitable for this assignment and simple local demos. PostgreSQL or another production database would be better for higher write concurrency.
-- TypeORM `synchronize` is enabled for fast local setup. Production deployments should use migrations.
+- TypeORM `synchronize` is enabled outside production for fast local setup. When `NODE_ENV=production`, synchronization is disabled; production deployments should use migrations.
 - Authentication and authorization are not included.
 - Jobs are manually advanced from the dashboard. There is no background worker process.
 - For deployment, host the backend on a Node-compatible platform with persistent storage and host the frontend on a static hosting platform.
+- The atomic conditional status update is the main production-minded improvement in this implementation because it protects the state machine even when clients race or bypass the React UI.
 
 ## Suggested Deployment Setup
 

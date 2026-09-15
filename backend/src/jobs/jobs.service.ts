@@ -40,6 +40,10 @@ export class JobsService {
       throw new ConflictException(`No job can transition to "${dto.status}" from another status`);
     }
 
+    if (dto.expectedStatus && !allowedSources.includes(dto.expectedStatus)) {
+      throw new ConflictException(`Invalid transition from "${dto.expectedStatus}" to "${dto.status}"`);
+    }
+
     const sourceStatuses = dto.expectedStatus ? [dto.expectedStatus] : allowedSources;
     const query = this.jobsRepository
       .createQueryBuilder()
